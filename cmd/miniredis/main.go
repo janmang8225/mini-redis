@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/janmang8225/mini-redis/config"
 	"github.com/janmang8225/mini-redis/internal/server"
@@ -46,6 +47,10 @@ func main() {
 	// init store
 	st := store.New()
 
+	// start active expiry worker — cleans expired keys every 100ms
+	expiryDone := make(chan struct{})
+	st.StartExpiryWorker(100*time.Millisecond, expiryDone)
+
 	// init TCP server
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := server.New(addr, st)
@@ -57,6 +62,7 @@ func main() {
 	go func() {
 		<-quit
 		slog.Info("shutting down...")
+		close(expiryDone)
 		srv.Stop()
 	}()
 

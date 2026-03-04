@@ -66,6 +66,16 @@ func (h *Handler) Handle(cmd *resp.Command, w *resp.Writer) {
 		h.typeCmd(cmd, w)
 
 	default:
+		// try lists, hashes, sets in order
+		if handleLists(h, cmd, w) {
+			return
+		}
+		if handleHashes(h, cmd, w) {
+			return
+		}
+		if handleSets(h, cmd, w) {
+			return
+		}
 		_ = w.WriteError(fmt.Sprintf("unknown command '%s'", cmd.Name()))
 	}
 }

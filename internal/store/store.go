@@ -169,6 +169,409 @@ func (s *Store) Expire(key string, ttl time.Duration) bool {
 	return true
 }
 
+// ─── Lists ─────────────────────────────────────────────────────────────────────
+
+// LPush prepends values to a list. Returns new length.
+func (s *Store) LPush(key string, values ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.data[key]
+	if ok && !e.isExpired() && e.valueType != TypeList {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	var list []string
+	if ok && !e.isExpired() {
+		list = e.value.([]string)
+	}
+
+	// prepend each value (like Redis — last arg ends up at head)
+	for _, v := range values {
+		list = append([]string{v}, list...)
+	}
+
+	s.data[key] = &entry{valueType: TypeList, value: list}
+	return int64(len(list)), nil
+}
+
+// RPush appends values to a list. Returns new length.
+func (s *Store) RPush(key string, values ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.data[key]
+	if ok && !e.isExpired() && e.valueType != TypeList {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	var list []string
+	if ok && !e.isExpired() {
+		list = e.value.([]string)
+	}
+
+	list = append(list, values...)
+	s.data[key] = &entry{valueType: TypeList, value: list}
+	return int64(len(list)), nil
+}
+
+// LPop removes and returns the first element of a list.
+func (s *Store) LPop(key string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e := s.get(key)
+	if e == nil {
+		return "", false, nil
+	}
+	if e.valueType != TypeList {
+		return "", false, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	list := e.value.([]string)
+	if len(list) == 0 {
+		return "", false, nil
+	}
+
+	val := list[0]
+	list = list[1:]
+	if len(list) == 0 {
+		delete(s.data, key)
+	} else {
+		e.value = list
+	}
+	return val, true, nil
+}
+
+// RPop removes and returns the last element of a list.
+func (s *Store) RPop(key string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e := s.get(key)
+	if e == nil {
+		return "", false, nil
+	}
+	if e.valueType != TypeList {
+		return "", false, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	list := e.value.([]string)
+	if len(list) == 0 {
+		return "", false, nil
+	}
+
+	val := list[len(list)-1]
+	list = list[:len(list)-1]
+	if len(list) == 0 {
+		delete(s.data, key)
+	} else {
+		e.value = list
+	}
+	return val, true, nil
+}
+
+// LRange returns elements from start to stop (inclusive). Negative indices supported.
+func (s *Store) LRange(key string, start, stop int) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return []string{}, nil
+	}
+	if e.valueType != TypeList {
+		return nil, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	list := e.value.([]string)
+	n := len(list)
+
+	// normalize negative indices
+	if start < 0 {
+		start = n + start
+	}
+	if stop < 0 {
+		stop = n + stop
+	}
+	if start < 0 {
+		start = 0
+	}
+	if stop >= n {
+		stop = n - 1
+	}
+	if start > stop {
+		return []string{}, nil
+	}
+
+	return list[start : stop+1], nil
+}
+
+// LLen returns the length of a list.
+func (s *Store) LLen(key string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return 0, nil
+	}
+	if e.valueType != TypeList {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+	return int64(len(e.value.([]string))), nil
+}
+
+// ─── Hashes ────────────────────────────────────────────────────────────────────
+
+// HSet sets field-value pairs on a hash. Returns number of new fields added.
+func (s *Store) HSet(key string, pairs map[string]string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.data[key]
+	if ok && !e.isExpired() && e.valueType != TypeHash {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	var hash map[string]string
+	if ok && !e.isExpired() {
+		hash = e.value.(map[string]string)
+	} else {
+		hash = make(map[string]string)
+	}
+
+	var added int64
+	for f, v := range pairs {
+		if _, exists := hash[f]; !exists {
+			added++
+		}
+		hash[f] = v
+	}
+
+	s.data[key] = &entry{valueType: TypeHash, value: hash}
+	return added, nil
+}
+
+// HGet returns the value of a hash field.
+func (s *Store) HGet(key, field string) (string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return "", false, nil
+	}
+	if e.valueType != TypeHash {
+		return "", false, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	val, ok := e.value.(map[string]string)[field]
+	return val, ok, nil
+}
+
+// HDel removes fields from a hash. Returns number deleted.
+func (s *Store) HDel(key string, fields ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e := s.get(key)
+	if e == nil {
+		return 0, nil
+	}
+	if e.valueType != TypeHash {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	hash := e.value.(map[string]string)
+	var deleted int64
+	for _, f := range fields {
+		if _, ok := hash[f]; ok {
+			delete(hash, f)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// HGetAll returns all field-value pairs in a hash.
+func (s *Store) HGetAll(key string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return map[string]string{}, nil
+	}
+	if e.valueType != TypeHash {
+		return nil, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	// return a copy — caller shouldn't mutate store internals
+	hash := e.value.(map[string]string)
+	result := make(map[string]string, len(hash))
+	for k, v := range hash {
+		result[k] = v
+	}
+	return result, nil
+}
+
+// HLen returns the number of fields in a hash.
+func (s *Store) HLen(key string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return 0, nil
+	}
+	if e.valueType != TypeHash {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+	return int64(len(e.value.(map[string]string))), nil
+}
+
+// ─── Sets ──────────────────────────────────────────────────────────────────────
+
+// SAdd adds members to a set. Returns number of new members added.
+func (s *Store) SAdd(key string, members ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.data[key]
+	if ok && !e.isExpired() && e.valueType != TypeSet {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	var set map[string]struct{}
+	if ok && !e.isExpired() {
+		set = e.value.(map[string]struct{})
+	} else {
+		set = make(map[string]struct{})
+	}
+
+	var added int64
+	for _, m := range members {
+		if _, exists := set[m]; !exists {
+			set[m] = struct{}{}
+			added++
+		}
+	}
+
+	s.data[key] = &entry{valueType: TypeSet, value: set}
+	return added, nil
+}
+
+// SMembers returns all members of a set.
+func (s *Store) SMembers(key string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return []string{}, nil
+	}
+	if e.valueType != TypeSet {
+		return nil, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	set := e.value.(map[string]struct{})
+	members := make([]string, 0, len(set))
+	for m := range set {
+		members = append(members, m)
+	}
+	return members, nil
+}
+
+// SRem removes members from a set. Returns number removed.
+func (s *Store) SRem(key string, members ...string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e := s.get(key)
+	if e == nil {
+		return 0, nil
+	}
+	if e.valueType != TypeSet {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	set := e.value.(map[string]struct{})
+	var removed int64
+	for _, m := range members {
+		if _, ok := set[m]; ok {
+			delete(set, m)
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// SIsMember returns whether a value is a member of a set.
+func (s *Store) SIsMember(key, member string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return false, nil
+	}
+	if e.valueType != TypeSet {
+		return false, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+
+	_, ok := e.value.(map[string]struct{})[member]
+	return ok, nil
+}
+
+// SCard returns the number of members in a set.
+func (s *Store) SCard(key string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	e := s.get(key)
+	if e == nil {
+		return 0, nil
+	}
+	if e.valueType != TypeSet {
+		return 0, fmt.Errorf("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+	return int64(len(e.value.(map[string]struct{}))), nil
+}
+
+// ─── Expiry ────────────────────────────────────────────────────────────────────
+
+// DeleteExpired scans all keys and removes expired ones.
+// Called by the active expiry worker — not by command handlers.
+func (s *Store) DeleteExpired() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var count int
+	for key, e := range s.data {
+		if e.isExpired() {
+			delete(s.data, key)
+			count++
+		}
+	}
+	return count
+}
+
+// Keys returns all non-expired keys matching a simple pattern.
+// Supports * (match all) and prefix* patterns only for now.
+func (s *Store) Keys() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]string, 0, len(s.data))
+	for k, e := range s.data {
+		if !e.isExpired() {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
 // IncrBy atomically increments a string integer value by delta.
 func (s *Store) IncrBy(key string, delta int64) (int64, error) {
 	s.mu.Lock()
