@@ -1,0 +1,14 @@
+port: 6379
+log_level: info
+max_memory: 256mb
+
+persistence:
+  aof: true
+  aof_file: miniredis.aof
+  snapshot: true
+  snapshot_file: miniredis.rdb
+  snapshot_interval_seconds: 300
+
+dashboard:
+  enabled: true
+  port: 8080
