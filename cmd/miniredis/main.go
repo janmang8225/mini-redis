@@ -11,6 +11,7 @@ import (
 
 	"github.com/janmang8225/mini-redis/config"
 	"github.com/janmang8225/mini-redis/internal/persistence"
+	"github.com/janmang8225/mini-redis/internal/pubsub"
 	"github.com/janmang8225/mini-redis/internal/server"
 	"github.com/janmang8225/mini-redis/internal/store"
 )
@@ -75,9 +76,12 @@ func main() {
 	snapDone := make(chan struct{})
 	pm.Start(st, snapDone)
 
+	// init pub/sub broker
+	broker := pubsub.NewBroker()
+
 	// init TCP server
 	addr := fmt.Sprintf(":%d", cfg.Port)
-	srv := server.New(addr, st, pm)
+	srv := server.New(addr, st, pm, broker)
 
 	// graceful shutdown on SIGINT / SIGTERM
 	quit := make(chan os.Signal, 1)

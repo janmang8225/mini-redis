@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/janmang8225/mini-redis/internal/persistence"
+	"github.com/janmang8225/mini-redis/internal/pubsub"
 	"github.com/janmang8225/mini-redis/internal/resp"
 	"github.com/janmang8225/mini-redis/internal/store"
 )
@@ -15,10 +16,11 @@ import (
 type Handler struct {
 	store   *store.Store
 	persist *persistence.Manager
+	broker  *pubsub.Broker
 }
 
-func NewHandler(st *store.Store, pm *persistence.Manager) *Handler {
-	return &Handler{store: st, persist: pm}
+func NewHandler(st *store.Store, pm *persistence.Manager, broker *pubsub.Broker) *Handler {
+	return &Handler{store: st, persist: pm, broker: broker}
 }
 
 // aof logs args to AOF after a successful write command.
@@ -37,6 +39,12 @@ func (h *Handler) Handle(cmd *resp.Command, w *resp.Writer) {
 		h.ping(cmd, w)
 	case "QUIT":
 		_ = w.WriteSimpleString("OK")
+
+	// --- pub/sub ---
+	case "SUBSCRIBE":
+		handleSubscribe(h.broker, cmd, w)
+	case "PUBLISH":
+		handlePublish(h.broker, cmd, w)
 
 	// --- server ---
 	case "FLUSHALL":
