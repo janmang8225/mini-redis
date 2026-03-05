@@ -1,2 +1,16 @@
-miniredis.aof
-miniredis.rdb.tmp
+# binary
+miniredis
+
+# persistence files
+*.aof
+*.rdb
+*.tmp
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

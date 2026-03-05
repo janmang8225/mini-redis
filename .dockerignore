@@ -1,0 +1,6 @@
+.git
+*.aof
+*.rdb
+*.tmp
+data/
+miniredis
