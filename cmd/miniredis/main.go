@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/janmang8225/mini-redis/config"
+	"github.com/janmang8225/mini-redis/internal/dashboard"
 	"github.com/janmang8225/mini-redis/internal/persistence"
 	"github.com/janmang8225/mini-redis/internal/pubsub"
 	"github.com/janmang8225/mini-redis/internal/server"
@@ -94,6 +95,18 @@ func main() {
 		close(snapDone) // triggers final snapshot before exit
 		srv.Stop()
 	}()
+
+	// start dashboard (non-blocking)
+	if cfg.Dashboard.Enabled {
+		dashAddr := fmt.Sprintf(":%d", cfg.Dashboard.Port)
+		dash := dashboard.New(dashAddr, st, broker)
+		go func() {
+			if err := dash.Start(); err != nil && err.Error() != "http: Server closed" {
+				slog.Error("dashboard error", "err", err)
+			}
+		}()
+		slog.Info("dashboard available", "url", fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port))
+	}
 
 	// blocking — runs until Stop() is called
 	if err := srv.Start(); err != nil {

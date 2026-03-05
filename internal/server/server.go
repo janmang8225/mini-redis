@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/janmang8225/mini-redis/internal/commands"
+	"github.com/janmang8225/mini-redis/internal/metrics"
 	"github.com/janmang8225/mini-redis/internal/persistence"
 	"github.com/janmang8225/mini-redis/internal/pubsub"
 	"github.com/janmang8225/mini-redis/internal/resp"
@@ -91,8 +92,10 @@ func (s *Server) handleConn(conn net.Conn) {
 		conn.Close()
 		s.connCount.Add(-1)
 		s.wg.Done()
+		metrics.ConnClosed()
 	}()
 
+	metrics.ConnOpened()
 	clientAddr := conn.RemoteAddr().String()
 	slog.Debug("client connected", "addr", clientAddr)
 
@@ -100,7 +103,6 @@ func (s *Server) handleConn(conn net.Conn) {
 	writer := resp.NewWriter(conn)
 
 	for {
-		// check if server is shutting down before blocking on read
 		select {
 		case <-s.quit:
 			return
@@ -113,7 +115,6 @@ func (s *Server) handleConn(conn net.Conn) {
 				slog.Debug("client disconnected", "addr", clientAddr)
 				return
 			}
-			// malformed input — tell the client and keep the connection alive
 			slog.Warn("protocol error", "addr", clientAddr, "err", err)
 			_ = writer.WriteError("Protocol error: " + err.Error())
 			continue
@@ -123,9 +124,8 @@ func (s *Server) handleConn(conn net.Conn) {
 			continue
 		}
 
+		metrics.RecordCommand()
 		slog.Debug("command received", "addr", clientAddr, "cmd", cmd.Name(), "args", cmd.Args[1:])
-
-		// dispatch to command handler
 		s.handler.Handle(cmd, writer)
 	}
 }

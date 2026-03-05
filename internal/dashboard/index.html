@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mini-redis — dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0a0a;
+    --surface:   #111111;
+    --border:    #1e1e1e;
+    --border2:   #2a2a2a;
+    --text:      #e0e0e0;
+    --muted:     #555555;
+    --accent:    #e8ff44;
+    --accent2:   #44ffd2;
+    --accent3:   #ff6b6b;
+    --string:    #7dd3fc;
+    --list:      #c4b5fd;
+    --hash:      #86efac;
+    --set:       #fdba74;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    color: #000;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .logo-text {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  .logo-text span { color: var(--accent); }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  .status-dot.error { background: var(--accent3); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  main { padding: 32px; max-width: 1400px; margin: 0 auto; }
+
+  /* stat cards row */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+
+  .stat-card:hover { background: #161616; }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 500;
+  }
+
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.2s;
+  }
+
+  .stat-value.accent  { color: var(--accent); }
+  .stat-value.accent2 { color: var(--accent2); }
+  .stat-value.accent3 { color: var(--accent3); }
+
+  .stat-sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* two-column layout */
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 24px;
+  }
+
+  /* panel */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: #0f0f0f;
+  }
+
+  .panel-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .panel-count {
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(232,255,68,0.08);
+    padding: 2px 8px;
+    border-radius: 20px;
+    border: 1px solid rgba(232,255,68,0.15);
+  }
+
+  /* search bar */
+  .search-wrap {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .search-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .search-input:focus { border-color: var(--accent); }
+  .search-input::placeholder { color: var(--muted); }
+
+  /* key table */
+  .key-table { width: 100%; border-collapse: collapse; }
+
+  .key-table th {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 10px 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+    background: #0d0d0d;
+  }
+
+  .key-table td {
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .key-table tr:last-child td { border-bottom: none; }
+  .key-table tr:hover td { background: #161616; }
+
+  .key-name {
+    font-size: 12px;
+    color: var(--text);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .type-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .type-string { background: rgba(125,211,252,0.1); color: var(--string); border: 1px solid rgba(125,211,252,0.2); }
+  .type-list   { background: rgba(196,181,253,0.1); color: var(--list);   border: 1px solid rgba(196,181,253,0.2); }
+  .type-hash   { background: rgba(134,239,172,0.1); color: var(--hash);   border: 1px solid rgba(134,239,172,0.2); }
+  .type-set    { background: rgba(253,186,116,0.1); color: var(--set);    border: 1px solid rgba(253,186,116,0.2); }
+
+  .ttl-chip {
+    font-size: 10px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ttl-chip.expiring { color: var(--accent3); }
+  .ttl-chip.no-expiry { color: #333; }
+
+  /* right panel — key inspector */
+  .inspector { display: flex; flex-direction: column; }
+
+  .inspector-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px 24px;
+    color: var(--muted);
+  }
+
+  .inspector-empty-icon { font-size: 32px; opacity: 0.3; }
+  .inspector-empty-text { font-size: 11px; text-align: center; line-height: 1.6; }
+
+  .inspector-content { padding: 20px; display: none; flex-direction: column; gap: 16px; }
+  .inspector-content.visible { display: flex; }
+
+  .inspector-key {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    word-break: break-all;
+    line-height: 1.4;
+  }
+
+  .inspector-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .inspector-section-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+  }
+
+  .value-box {
+    background: var(--bg);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 12px;
+    color: var(--accent2);
+    word-break: break-all;
+    line-height: 1.6;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .list-item, .set-item {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .list-item:last-child, .set-item:last-child { border-bottom: none; }
+
+  .list-index {
+    font-size: 10px;
+    color: var(--muted);
+    min-width: 24px;
+    text-align: right;
+  }
+
+  .hash-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .hash-row:last-child { border-bottom: none; }
+  .hash-field { padding: 5px 8px 5px 0; color: var(--muted); }
+  .hash-val   { padding: 5px 0;          color: var(--text); }
+
+  /* empty / loading states */
+  .empty-keys {
+    padding: 48px 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 2;
+  }
+
+  .loading { color: var(--muted); font-size: 11px; }
+
+  /* refresh indicator */
+  .refresh-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--border);
+    z-index: 200;
+  }
+
+  .refresh-progress {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width linear;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">m</div>
+    <div class="logo-text"><span>mini</span>-redis</div>
+  </div>
+  <div class="status">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">connecting...</span>
+    <span style="color: var(--border2)">|</span>
+    <span id="refreshCountdown">refresh in 2s</span>
+  </div>
+</header>
+
+<main>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">total keys</div>
+      <div class="stat-value accent" id="statKeys">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">commands/sec</div>
+      <div class="stat-value accent2" id="statCmdSec">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">total commands</div>
+      <div class="stat-value" id="statCmdTotal">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">active clients</div>
+      <div class="stat-value" id="statConns">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">pub/sub subs</div>
+      <div class="stat-value" id="statPubsub">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">uptime</div>
+      <div class="stat-value" id="statUptime" style="font-size:18px">—</div>
+    </div>
+  </div>
+
+  <div class="content-grid">
+    <!-- Key browser -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">key browser</span>
+        <span class="panel-count" id="keyCount">0 keys</span>
+      </div>
+      <div class="search-wrap">
+        <input class="search-input" type="text" id="searchInput" placeholder="filter keys...">
+      </div>
+      <div style="overflow-x: auto;">
+        <table class="key-table">
+          <thead>
+            <tr>
+              <th>key</th>
+              <th>type</th>
+              <th>ttl</th>
+            </tr>
+          </thead>
+          <tbody id="keyTableBody">
+            <tr><td colspan="3" class="empty-keys">loading keys...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Key inspector -->
+    <div class="panel inspector">
+      <div class="panel-header">
+        <span class="panel-title">inspector</span>
+      </div>
+      <div class="inspector-empty" id="inspectorEmpty">
+        <div class="inspector-empty-icon">◈</div>
+        <div class="inspector-empty-text">click any key<br>to inspect its value</div>
+      </div>
+      <div class="inspector-content" id="inspectorContent">
+        <div class="inspector-key" id="inspKey"></div>
+        <div class="inspector-meta" id="inspMeta"></div>
+        <div>
+          <div class="inspector-section-label">value</div>
+          <div class="value-box" id="inspValue"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="refresh-bar">
+  <div class="refresh-progress" id="refreshBar"></div>
+</div>
+
+<script>
+  const REFRESH_MS = 2000;
+  let allKeys = [];
+  let refreshTimer = null;
+  let countdownInterval = null;
+
+  async function fetchStats() {
+    const res = await fetch('/api/stats');
+    return res.json();
+  }
+
+  async function fetchKeys() {
+    const res = await fetch('/api/keys');
+    return res.json();
+  }
+
+  async function fetchKey(k) {
+    const res = await fetch('/api/key?k=' + encodeURIComponent(k));
+    if (!res.ok) return null;
+    return res.json();
+  }
+
+  function fmt(n) {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'k';
+    return String(n);
+  }
+
+  function ttlLabel(ttl) {
+    if (ttl === -1) return { text: '∞', cls: 'no-expiry' };
+    if (ttl === -2) return { text: 'gone', cls: 'expiring' };
+    if (ttl < 10)   return { text: ttl + 's', cls: 'expiring' };
+    if (ttl < 60)   return { text: ttl + 's', cls: '' };
+    const m = Math.floor(ttl / 60);
+    const s = ttl % 60;
+    return { text: m + 'm ' + s + 's', cls: '' };
+  }
+
+  function renderKeys(keys) {
+    const filter = document.getElementById('searchInput').value.toLowerCase();
+    const filtered = filter ? keys.filter(k => k.key.toLowerCase().includes(filter)) : keys;
+    const tbody = document.getElementById('keyTableBody');
+    document.getElementById('keyCount').textContent = filtered.length + ' key' + (filtered.length !== 1 ? 's' : '');
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="3" class="empty-keys">${filter ? 'no matching keys' : 'no keys yet —<br>run SET foo bar to get started'}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(k => {
+      const { text, cls } = ttlLabel(k.ttl);
+      return `<tr onclick="inspectKey('${escHtml(k.key)}')">
+        <td><div class="key-name">${escHtml(k.key)}</div></td>
+        <td><span class="type-badge type-${k.type}">${k.type}</span></td>
+        <td><span class="ttl-chip ${cls}">${text}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function inspectKey(key) {
+    document.getElementById('inspectorEmpty').style.display = 'none';
+    const content = document.getElementById('inspectorContent');
+    content.classList.add('visible');
+    document.getElementById('inspKey').textContent = key;
+    document.getElementById('inspValue').innerHTML = '<span class="loading">loading...</span>';
+    document.getElementById('inspMeta').innerHTML = '';
+
+    const data = await fetchKey(key);
+    if (!data) {
+      document.getElementById('inspValue').textContent = '(key not found)';
+      return;
+    }
+
+    const { text, cls } = ttlLabel(data.ttl);
+    document.getElementById('inspMeta').innerHTML =
+      `<span class="type-badge type-${data.type}">${data.type}</span>
+       <span class="ttl-chip ${cls}" style="margin-left:4px">ttl: ${text}</span>`;
+
+    const valBox = document.getElementById('inspValue');
+    if (data.type === 'string') {
+      valBox.textContent = data.value;
+    } else if (data.type === 'list') {
+      valBox.innerHTML = (data.value || []).map((v, i) =>
+        `<div class="list-item"><span class="list-index">${i}</span>${escHtml(v)}</div>`
+      ).join('') || '(empty)';
+    } else if (data.type === 'hash') {
+      const h = data.value || {};
+      valBox.innerHTML = Object.entries(h).map(([f, v]) =>
+        `<div class="hash-row"><div class="hash-field">${escHtml(f)}</div><div class="hash-val">${escHtml(v)}</div></div>`
+      ).join('') || '(empty)';
+    } else if (data.type === 'set') {
+      valBox.innerHTML = (data.value || []).map(m =>
+        `<div class="set-item">${escHtml(m)}</div>`
+      ).join('') || '(empty)';
+    }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  async function refresh() {
+    try {
+      const [stats, keysData] = await Promise.all([fetchStats(), fetchKeys()]);
+
+      document.getElementById('statusDot').className = 'status-dot';
+      document.getElementById('statusText').textContent = 'connected';
+
+      document.getElementById('statKeys').textContent    = fmt(stats.total_keys);
+      document.getElementById('statCmdSec').textContent  = fmt(stats.cmd_per_sec);
+      document.getElementById('statCmdTotal').textContent = fmt(stats.cmd_total);
+      document.getElementById('statConns').textContent   = stats.conn_current;
+      document.getElementById('statPubsub').textContent  = stats.pubsub_clients;
+      document.getElementById('statUptime').textContent  = stats.uptime_human;
+
+      allKeys = keysData.keys || [];
+      renderKeys(allKeys);
+    } catch (e) {
+      document.getElementById('statusDot').className = 'status-dot error';
+      document.getElementById('statusText').textContent = 'disconnected';
+    }
+  }
+
+  function startCountdown() {
+    const bar = document.getElementById('refreshBar');
+    const countdown = document.getElementById('refreshCountdown');
+    let remaining = REFRESH_MS;
+    const step = 50;
+
+    bar.style.transition = `width ${REFRESH_MS}ms linear`;
+    bar.style.width = '100%';
+
+    if (countdownInterval) clearInterval(countdownInterval);
+    countdownInterval = setInterval(() => {
+      remaining -= step;
+      const secs = Math.max(0, (remaining / 1000)).toFixed(1);
+      countdown.textContent = `refresh in ${secs}s`;
+      if (remaining <= 0) clearInterval(countdownInterval);
+    }, step);
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    bar.style.width = '0%';
+    bar.style.transition = 'none';
+
+    setTimeout(() => {
+      startCountdown();
+      refreshTimer = setTimeout(async () => {
+        await refresh();
+        scheduleRefresh();
+      }, REFRESH_MS);
+    }, 10);
+  }
+
+  // search
+  document.getElementById('searchInput').addEventListener('input', () => {
+    renderKeys(allKeys);
+  });
+
+  const bar = document.getElementById('refreshBar');
+
+  // kick off
+  refresh().then(() => scheduleRefresh());
+</script>
+</body>
+</html>
