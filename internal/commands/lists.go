@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/janmang8225/mini-redis/internal/persistence"
 	"github.com/janmang8225/mini-redis/internal/resp"
 	"github.com/janmang8225/mini-redis/internal/store"
 )
@@ -11,15 +12,15 @@ import (
 func handleLists(h *Handler, cmd *resp.Command, w *resp.Writer) bool {
 	switch cmd.Name() {
 	case "LPUSH":
-		lpush(h.store, cmd, w)
+		lpush(h.store, h.persist, cmd, w)
 	case "RPUSH":
-		rpush(h.store, cmd, w)
+		rpush(h.store, h.persist, cmd, w)
 	case "LPOP":
-		lpop(h.store, cmd, w)
+		lpop(h.store, h.persist, cmd, w)
 	case "RPOP":
-		rpop(h.store, cmd, w)
+		rpop(h.store, h.persist, cmd, w)
 	case "LRANGE":
-		lrange(h.store, cmd, w)
+		lrange(h.store, h.persist, cmd, w)
 	case "LLEN":
 		llen(h.store, cmd, w)
 	default:
@@ -28,7 +29,7 @@ func handleLists(h *Handler, cmd *resp.Command, w *resp.Writer) bool {
 	return true
 }
 
-func lpush(st *store.Store, cmd *resp.Command, w *resp.Writer) {
+func lpush(st *store.Store, pm *persistence.Manager, cmd *resp.Command, w *resp.Writer) {
 	if len(cmd.Args) < 3 {
 		_ = w.WriteError("wrong number of arguments for 'LPUSH'")
 		return
@@ -38,10 +39,13 @@ func lpush(st *store.Store, cmd *resp.Command, w *resp.Writer) {
 		_ = w.WriteError(err.Error())
 		return
 	}
+	if pm != nil {
+		pm.WriteAOF(cmd.Args)
+	}
 	_ = w.WriteInteger(n)
 }
 
-func rpush(st *store.Store, cmd *resp.Command, w *resp.Writer) {
+func rpush(st *store.Store, pm *persistence.Manager, cmd *resp.Command, w *resp.Writer) {
 	if len(cmd.Args) < 3 {
 		_ = w.WriteError("wrong number of arguments for 'RPUSH'")
 		return
@@ -51,10 +55,13 @@ func rpush(st *store.Store, cmd *resp.Command, w *resp.Writer) {
 		_ = w.WriteError(err.Error())
 		return
 	}
+	if pm != nil {
+		pm.WriteAOF(cmd.Args)
+	}
 	_ = w.WriteInteger(n)
 }
 
-func lpop(st *store.Store, cmd *resp.Command, w *resp.Writer) {
+func lpop(st *store.Store, pm *persistence.Manager, cmd *resp.Command, w *resp.Writer) {
 	if len(cmd.Args) != 2 {
 		_ = w.WriteError("wrong number of arguments for 'LPOP'")
 		return
@@ -68,10 +75,13 @@ func lpop(st *store.Store, cmd *resp.Command, w *resp.Writer) {
 		_ = w.WriteNull()
 		return
 	}
+	if pm != nil {
+		pm.WriteAOF(cmd.Args)
+	}
 	_ = w.WriteBulkString(val)
 }
 
-func rpop(st *store.Store, cmd *resp.Command, w *resp.Writer) {
+func rpop(st *store.Store, pm *persistence.Manager, cmd *resp.Command, w *resp.Writer) {
 	if len(cmd.Args) != 2 {
 		_ = w.WriteError("wrong number of arguments for 'RPOP'")
 		return
@@ -85,10 +95,13 @@ func rpop(st *store.Store, cmd *resp.Command, w *resp.Writer) {
 		_ = w.WriteNull()
 		return
 	}
+	if pm != nil {
+		pm.WriteAOF(cmd.Args)
+	}
 	_ = w.WriteBulkString(val)
 }
 
-func lrange(st *store.Store, cmd *resp.Command, w *resp.Writer) {
+func lrange(st *store.Store, _ *persistence.Manager, cmd *resp.Command, w *resp.Writer) {
 	if len(cmd.Args) != 4 {
 		_ = w.WriteError("wrong number of arguments for 'LRANGE'")
 		return

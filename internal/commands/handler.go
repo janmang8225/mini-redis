@@ -6,17 +6,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/janmang8225/mini-redis/internal/persistence"
 	"github.com/janmang8225/mini-redis/internal/resp"
 	"github.com/janmang8225/mini-redis/internal/store"
 )
 
 // Handler dispatches incoming commands to their implementations.
 type Handler struct {
-	store *store.Store
+	store   *store.Store
+	persist *persistence.Manager
 }
 
-func NewHandler(st *store.Store) *Handler {
-	return &Handler{store: st}
+func NewHandler(st *store.Store, pm *persistence.Manager) *Handler {
+	return &Handler{store: st, persist: pm}
+}
+
+// aof logs args to AOF after a successful write command.
+func (h *Handler) aof(args []string) {
+	if h.persist != nil {
+		h.persist.WriteAOF(args)
+	}
 }
 
 // Handle routes a parsed command to the correct function.
@@ -95,6 +104,7 @@ func (h *Handler) ping(cmd *resp.Command, w *resp.Writer) {
 
 func (h *Handler) flushAll(_ *resp.Command, w *resp.Writer) {
 	h.store.FlushAll()
+	h.aof([]string{"FLUSHALL"})
 	_ = w.WriteSimpleString("OK")
 }
 
@@ -176,6 +186,7 @@ func (h *Handler) set(cmd *resp.Command, w *resp.Writer) {
 	}
 
 	h.store.SetString(key, val, ttl)
+	h.aof(cmd.Args)
 	_ = w.WriteSimpleString("OK")
 }
 
@@ -198,7 +209,11 @@ func (h *Handler) del(cmd *resp.Command, w *resp.Writer) {
 		_ = w.WriteError("wrong number of arguments for 'DEL'")
 		return
 	}
-	_ = w.WriteInteger(h.store.Delete(cmd.Args[1:]...))
+	n := h.store.Delete(cmd.Args[1:]...)
+	if n > 0 {
+		h.aof(cmd.Args)
+	}
+	_ = w.WriteInteger(n)
 }
 
 func (h *Handler) exists(cmd *resp.Command, w *resp.Writer) {
@@ -221,6 +236,7 @@ func (h *Handler) expire(cmd *resp.Command, w *resp.Writer) {
 	}
 	ok := h.store.Expire(cmd.Args[1], time.Duration(secs)*time.Second)
 	if ok {
+		h.aof(cmd.Args)
 		_ = w.WriteInteger(1)
 	} else {
 		_ = w.WriteInteger(0)
@@ -255,6 +271,7 @@ func (h *Handler) incrBy(cmd *resp.Command, w *resp.Writer, delta int64) {
 		_ = w.WriteError(err.Error())
 		return
 	}
+	h.aof(cmd.Args)
 	_ = w.WriteInteger(newVal)
 }
 
@@ -277,6 +294,7 @@ func (h *Handler) incrByN(cmd *resp.Command, w *resp.Writer, negate bool) {
 		_ = w.WriteError(err.Error())
 		return
 	}
+	h.aof(cmd.Args)
 	_ = w.WriteInteger(newVal)
 }
 
@@ -289,6 +307,7 @@ func (h *Handler) mset(cmd *resp.Command, w *resp.Writer) {
 	for i := 1; i < len(cmd.Args); i += 2 {
 		h.store.SetString(cmd.Args[i], cmd.Args[i+1], 0)
 	}
+	h.aof(cmd.Args)
 	_ = w.WriteSimpleString("OK")
 }
 

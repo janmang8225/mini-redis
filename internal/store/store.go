@@ -3,8 +3,11 @@ package store
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/janmang8225/mini-redis/internal/persistence"
 )
 
 // ValueType identifies what kind of data is stored at a key.
@@ -572,7 +575,156 @@ func (s *Store) Keys() []string {
 	return keys
 }
 
-// IncrBy atomically increments a string integer value by delta.
+// ─── Persistence ───────────────────────────────────────────────────────────────
+
+// Snapshot exports the entire store as a map of SnapshotEntry for serialization.
+func (s *Store) Snapshot() map[string]persistence.SnapshotEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]persistence.SnapshotEntry, len(s.data))
+	for k, e := range s.data {
+		if e.isExpired() {
+			continue
+		}
+		entry := persistence.SnapshotEntry{
+			Type:      uint8(e.valueType),
+			ExpiresAt: e.expiresAt,
+		}
+		switch e.valueType {
+		case TypeString:
+			entry.StrVal = e.value.(string)
+		case TypeList:
+			list := e.value.([]string)
+			entry.ListVal = make([]string, len(list))
+			copy(entry.ListVal, list)
+		case TypeHash:
+			hash := e.value.(map[string]string)
+			entry.HashVal = make(map[string]string, len(hash))
+			for hk, hv := range hash {
+				entry.HashVal[hk] = hv
+			}
+		case TypeSet:
+			set := e.value.(map[string]struct{})
+			members := make([]string, 0, len(set))
+			for m := range set {
+				members = append(members, m)
+			}
+			entry.SetVal = members
+		}
+		out[k] = entry
+	}
+	return out
+}
+
+// LoadSnapshot imports snapshot entries into the store.
+// Called once on startup — no locking needed before server accepts connections.
+func (s *Store) LoadSnapshot(entries map[string]persistence.SnapshotEntry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for k, se := range entries {
+		e := &entry{
+			valueType: ValueType(se.Type),
+			expiresAt: se.ExpiresAt,
+		}
+		switch ValueType(se.Type) {
+		case TypeString:
+			e.value = se.StrVal
+		case TypeList:
+			e.value = se.ListVal
+		case TypeHash:
+			e.value = se.HashVal
+		case TypeSet:
+			set := make(map[string]struct{}, len(se.SetVal))
+			for _, m := range se.SetVal {
+				set[m] = struct{}{}
+			}
+			e.value = set
+		}
+		s.data[k] = e
+	}
+}
+
+// ReplayCommand re-executes a single AOF command directly on the store.
+// This bypasses the TCP/RESP layer — pure store operations only.
+// Write commands only — reads are never logged to AOF.
+func (s *Store) ReplayCommand(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+
+	cmd := strings.ToUpper(args[0])
+	switch cmd {
+	case "SET":
+		if len(args) >= 3 {
+			s.SetString(args[1], args[2], 0)
+		}
+	case "DEL":
+		if len(args) >= 2 {
+			s.Delete(args[1:]...)
+		}
+	case "EXPIRE":
+		if len(args) == 3 {
+			var secs int64
+			fmt.Sscanf(args[2], "%d", &secs)
+			s.Expire(args[1], time.Duration(secs)*time.Second)
+		}
+	case "LPUSH":
+		if len(args) >= 3 {
+			s.LPush(args[1], args[2:]...)
+		}
+	case "RPUSH":
+		if len(args) >= 3 {
+			s.RPush(args[1], args[2:]...)
+		}
+	case "LPOP":
+		if len(args) == 2 {
+			s.LPop(args[1])
+		}
+	case "RPOP":
+		if len(args) == 2 {
+			s.RPop(args[1])
+		}
+	case "HSET":
+		if len(args) >= 4 {
+			pairs := make(map[string]string)
+			for i := 2; i < len(args)-1; i += 2 {
+				pairs[args[i]] = args[i+1]
+			}
+			s.HSet(args[1], pairs)
+		}
+	case "HDEL":
+		if len(args) >= 3 {
+			s.HDel(args[1], args[2:]...)
+		}
+	case "SADD":
+		if len(args) >= 3 {
+			s.SAdd(args[1], args[2:]...)
+		}
+	case "SREM":
+		if len(args) >= 3 {
+			s.SRem(args[1], args[2:]...)
+		}
+	case "FLUSHALL":
+		s.FlushAll()
+	case "INCR", "INCRBY", "DECR", "DECRBY":
+		var delta int64 = 1
+		if cmd == "DECR" {
+			delta = -1
+		}
+		if (cmd == "INCRBY" || cmd == "DECRBY") && len(args) == 3 {
+			fmt.Sscanf(args[2], "%d", &delta)
+			if cmd == "DECRBY" {
+				delta = -delta
+			}
+		}
+		if len(args) >= 2 {
+			s.IncrBy(args[1], delta)
+		}
+	}
+	return nil
+}
 func (s *Store) IncrBy(key string, delta int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

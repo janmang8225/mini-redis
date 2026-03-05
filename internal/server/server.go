@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/janmang8225/mini-redis/internal/commands"
+	"github.com/janmang8225/mini-redis/internal/persistence"
 	"github.com/janmang8225/mini-redis/internal/resp"
 	"github.com/janmang8225/mini-redis/internal/store"
 )
@@ -30,11 +31,11 @@ type Server struct {
 	connCount atomic.Int64
 }
 
-func New(addr string, st *store.Store) *Server {
+func New(addr string, st *store.Store, pm *persistence.Manager) *Server {
 	return &Server{
 		addr:    addr,
 		store:   st,
-		handler: commands.NewHandler(st),
+		handler: commands.NewHandler(st, pm),
 		quit:    make(chan struct{}),
 	}
 }
