@@ -1,2 +1,2 @@
-miniredis.aof
-miniredis.rdb.tmp
+./miniredis.aof
+./miniredis.rdb.tmp
